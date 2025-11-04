@@ -122,56 +122,36 @@ return {
     },
   },
 
-  -- Additional LSP configurations
+  -- LSP and Mason configurations
   {
     "neovim/nvim-lspconfig",
     opts = {
       servers = {
-        -- Ensure basedpyright for Python (modern replacement for pyright)
+        -- TypeScript/JavaScript (handled by lazyvim.plugins.extras.lang.typescript)
+        -- Python
         basedpyright = {},
-
-        -- Additional tools for infrastructure as code
+        -- Go (handled by lazyvim.plugins.extras.lang.go)
+        -- Rust (handled by lazyvim.plugins.extras.lang.rust)
+        -- Terraform (handled by lazyvim.plugins.extras.lang.terraform)
         tflint = {},
+        -- Markdown (handled by lazyvim.plugins.extras.lang.markdown)
+        -- Bash (handled by lazyvim.plugins.extras.util.dot)
       },
     },
   },
 
-  -- Mason tool installer
+  -- Mason configuration (consolidated with LazyVim's default)
   {
     "mason-org/mason.nvim",
-    opts = {
-      max_concurrent_installers = 1,
-      ensure_installed = {
-        -- TypeScript/JavaScript
-        "typescript-language-server",
-        "eslint-lsp",
+    opts = function(_, opts)
+      opts.ensure_installed = opts.ensure_installed or {}
+      vim.list_extend(opts.ensure_installed, {
+        -- Formatters and linters not covered by language extras
         "prettier",
-
-        -- Python
-        "basedpyright",
-        "ruff",
         "black",
-
-        -- Go
-        "gopls",
-        "gofumpt",
-        "goimports",
-
-        -- Rust
-        "rust-analyzer",
-
-        -- Terraform
-        "terraform-ls",
-        "tflint",
-
-        -- Markdown
-        "marksman",
-
-        -- Shell/Bash
-        "bash-language-server",
         "shellcheck",
         "shfmt",
-      },
-    },
+      })
+    end,
   },
 }
