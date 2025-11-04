@@ -26,18 +26,21 @@ severity1/
 ## Configurations
 
 ### Ghostty Terminal
+
 - Font size: 12
 - Theme: Catppuccin Mocha
 - Shell integration: zsh with sudo and cursor features
 - Location: `~/.config/ghostty/config`
 
 ### Neovim/LazyVim
+
 - Based on LazyVim starter configuration
 - Language support: TypeScript/JavaScript, Python, Go, Rust, Terraform
 - Custom terminal integration with toggleterm.nvim (height: 20 lines)
 - Location: `~/.config/nvim/`
 
 ### Claude Code
+
 - Global instructions with tool preferences and code standards
 - Custom settings for hooks and environment
 - Location: `~/.claude/`
@@ -53,7 +56,9 @@ Run the installation script from the repository directory:
 ```
 
 The script will:
+
 - Check for required dependencies (Ghostty, Neovim, Git)
+
 - Validate optional language toolchains (Node.js, Python, Go, Rust, Terraform)
 - Back up existing configurations to `~/.config-backup-TIMESTAMP/`
 - Install all configurations to their respective locations
@@ -64,18 +69,21 @@ The script will:
 If you prefer to install configurations manually:
 
 #### Ghostty
+
 ```bash
 mkdir -p ~/.config/ghostty
 cp ghostty/config ~/.config/ghostty/config
 ```
 
 #### Neovim
+
 ```bash
 mkdir -p ~/.config/nvim
 cp -r nvim/* ~/.config/nvim/
 ```
 
 #### Claude Code
+
 ```bash
 mkdir -p ~/.claude
 cp claude/CLAUDE.md ~/.claude/CLAUDE.md
