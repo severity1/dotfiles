@@ -4,7 +4,7 @@ This repository contains my personal configuration files for various tools and a
 
 ## Structure
 
-```
+```text
 severity1/
 ├── ghostty/          # Ghostty terminal emulator configuration
 │   └── config
@@ -82,7 +82,7 @@ mkdir -p ~/.config/nvim
 cp -r nvim/* ~/.config/nvim/
 ```
 
-#### Claude Code
+#### Claude Code Configuration
 
 ```bash
 mkdir -p ~/.claude
@@ -92,4 +92,6 @@ cp claude/settings.json ~/.claude/settings.json
 
 ## Notes
 
-This repository is intended to capture and version control personal configuration files for easy portability across machines and backup purposes.
+This repository is intended to capture and version control personal
+configuration files for easy portability across machines and backup
+purposes.
