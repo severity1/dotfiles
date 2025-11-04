@@ -1,0 +1,18 @@
+# Claude Code runtime files
+claude/__store.db
+claude/history.jsonl
+claude/projects/
+claude/session-env/
+claude/debug/
+claude/file-history/
+claude/shell-snapshots/
+claude/todos/
+claude/statsig/
+claude/local/
+claude/ide/
+claude/plugins/
+claude/*.lock
+claude/*.bak
+
+# Backup directories created by install script
+.config-backup-*/
