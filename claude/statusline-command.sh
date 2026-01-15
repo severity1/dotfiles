@@ -1,8 +1,9 @@
 #!/bin/bash
 # Claude Code statusline - Optimized version (<100ms target)
 # Line 1: [user][host][branch info][path]
-# Line 2: [SESSION id][model ctx%][tokens][cost][duration][tools]
-# Line 3: [TOTAL: ...][SINCE: ... | peak: ... | avg: ...]
+# Line 2: [SESSION id][model ctx%][msg|tools][$cost][duration][+lines/-lines]
+# Line 3: [TOTAL: tok|msg|sess|$cost|cached%][SINCE: date|avg]
+# Line 4: [RECORDS: longest:dur/msg | peak:hour | mix:O:x%S:y%]
 
 # ==================== COLORS (Mairan Theme) ====================
 # Bold colors matching ~/.oh-my-bash/themes/mairan/mairan.theme.sh
@@ -155,14 +156,16 @@ build_ctx_bar() {
 # ==================== INPUT PARSING (SINGLE JQ) ====================
 # Use "_" placeholder for empty fields to handle consecutive tabs in TSV
 input_json=$(cat)
-IFS=$'\t' read -r model_id cwd used_pct sess_in sess_out transcript_path cc_session_cost <<< \
-  $(echo "$input_json" | jq -r '[.model.id//"_", .workspace.current_dir//"_", .context_window.used_percentage//"_", .context_window.total_input_tokens//0, .context_window.total_output_tokens//0, .transcript_path//"_", .cost.total_cost_usd//"_"] | @tsv')
+IFS=$'\t' read -r model_id cwd used_pct sess_in sess_out transcript_path cc_session_cost lines_added lines_removed <<< \
+  $(echo "$input_json" | jq -r '[.model.id//"_", .workspace.current_dir//"_", .context_window.used_percentage//"_", .context_window.total_input_tokens//0, .context_window.total_output_tokens//0, .transcript_path//"_", .cost.total_cost_usd//"_", .cost.total_lines_added//0, .cost.total_lines_removed//0] | @tsv')
 # Convert placeholders back to empty strings
 [[ "$model_id" == "_" ]] && model_id=""
 [[ "$cwd" == "_" ]] && cwd=""
 [[ "$used_pct" == "_" ]] && used_pct=""
 [[ "$transcript_path" == "_" ]] && transcript_path=""
 [[ "$cc_session_cost" == "_" ]] && cc_session_cost=""
+[[ "$lines_added" == "_" ]] && lines_added=0
+[[ "$lines_removed" == "_" ]] && lines_removed=0
 
 # Model short name
 model=""
@@ -237,10 +240,11 @@ stats_file="$HOME/.claude/stats-cache.json"
 
 # Defaults
 total_in=0 total_out=0 cache_read=0 total_msg=0 total_sess=0 peak_hr="" first_date=""
-total_cost_accurate=0
+total_cost_accurate=0 longest_dur=0 longest_msgs=0 model_breakdown=""
 
 if [[ -f "$stats_file" ]]; then
-  read -r total_in total_out cache_read total_msg total_sess peak_hr first_date total_cost_accurate <<< \
+  read -r total_in total_out cache_read total_msg total_sess peak_hr first_date \
+    total_cost_accurate longest_dur longest_msgs model_breakdown <<< \
     $(jq -r '
       # Total: accurate per-model costs using actual input/output tokens
       # Rates: Opus $15/$75, Sonnet $3/$15, Haiku $0.25/$1.25 (in/out per M tokens)
@@ -252,6 +256,15 @@ if [[ -f "$stats_file" ]]; then
         ((.value.inputTokens // 0) * $r.ip + (.value.outputTokens // 0) * $r.op) / 1000000
       ) | add // 0) as $tc |
 
+      # Model breakdown: calculate % of total cost per model
+      (.modelUsage | to_entries | map(
+        (.key | if contains("opus") then {n:"O",ip:15,op:75}
+                elif contains("sonnet") then {n:"S",ip:3,op:15}
+                elif contains("haiku") then {n:"H",ip:0.25,op:1.25}
+                else {n:"?",ip:3,op:15} end) as $r |
+        {name: $r.n, cost: (((.value.inputTokens//0)*$r.ip + (.value.outputTokens//0)*$r.op)/1000000)}
+      ) | if $tc > 0 then map("\(.name):\(.cost/$tc*100|floor)%") | join(" ") else "" end) as $mb |
+
       [
         (.modelUsage | to_entries | map(.value.inputTokens//0) | add // 0),
         (.modelUsage | to_entries | map(.value.outputTokens//0) | add // 0),
@@ -259,7 +272,10 @@ if [[ -f "$stats_file" ]]; then
         (.totalMessages // 0), (.totalSessions // 0),
         (.hourCounts | to_entries | max_by(.value) | .key // ""),
         (.dailyActivity | sort_by(.date) | .[0].date // ""),
-        $tc
+        $tc,
+        ((.longestSession.duration // 0) / 1000 | floor),  # Convert ms to seconds
+        (.longestSession.messageCount // 0),
+        $mb
       ] | @tsv
     ' "$stats_file" 2>/dev/null)
 fi
@@ -335,11 +351,26 @@ elif [[ -n "$model" ]]; then
 fi
 ctx_bar="$_ctx_bar"
 
-line2="[${O}SESSION ${G}${session_id}${Z}]${ctx_bar}[${G}$(fmt_tok "$sess_in")${Z} ${D}in${Z} | ${G}$(fmt_tok "$sess_out")${Z} ${D}out${Z} | $(thresh_col "$sess_cost" 1 10)\$${sess_cost}${Z}][${Y}${sess_dur}${Z}][${Y}${tool_count}${Z} ${D}tools${Z}]"
+# Format lines changed for session
+lines_diff=""
+if ((lines_added > 0 || lines_removed > 0)); then
+  lines_diff="[${G}+${lines_added}${Z}/${R}-${lines_removed}${Z}]"
+fi
 
-# Line 3: [TOTAL][SINCE]
+# Line 2: SESSION with msg/tools, cost, duration, lines changed
+line2="[${O}SESSION ${G}${session_id}${Z}]${ctx_bar}[${G}${sess_msg_count}${Z} ${D}msg${Z} | ${Y}${tool_count}${Z} ${D}tools${Z}][$(thresh_col "$sess_cost" 1 10)\$${sess_cost}${Z}][${Y}${sess_dur}${Z}]${lines_diff}"
+
+# Line 3: [TOTAL][SINCE] - cleaned up
 line3="[${O}TOTAL:${Z} ${G}$(fmt_tok "$total_tok")${Z} ${D}tok${Z} | ${G}$(fmt_tok "$total_msg")${Z} ${D}msg${Z} | ${G}${total_sess}${Z} ${D}sess${Z} | $(thresh_col "$total_cost" 100 500)\$${total_cost}${Z} | ${G}${cache_rate}%${Z} ${D}cached${Z}]"
-line3+="[${O}SINCE:${Z} ${G}${first_fmt}${Z} | ${Y}peak:${Z} ${G}${peak_fmt}${Z} | ${G}avg: \$${avg_cost}${Z}${D}/sess${Z}]"
+line3+="[${O}SINCE:${Z} ${G}${first_fmt}${Z} | ${G}avg: \$${avg_cost}${Z}${D}/sess${Z}]"
+
+# Line 4: RECORDS - longest session, peak hour, model mix
+longest_rec=""
+((longest_dur > 0)) && longest_rec="${D}longest:${Z} ${G}$(fmt_dur "$longest_dur")${Z}/${G}${longest_msgs}${Z}${D}msg${Z}"
+peak_rec="${D}peak:${Z} ${G}${peak_fmt}${Z}"
+model_rec=""
+[[ -n "$model_breakdown" ]] && model_rec="${D}mix:${Z} ${P}${model_breakdown}${Z}"
+line4="[${O}RECORDS:${Z} ${longest_rec} | ${peak_rec} | ${model_rec}]"
 
 # ==================== OUTPUT ====================
-printf "%b\n%b\n%b" "$line1" "$line2" "$line3"
+printf "%b\n%b\n%b\n%b" "$line1" "$line2" "$line3" "$line4"
