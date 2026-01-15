@@ -152,14 +152,13 @@ build_ctx_bar() {
 # ==================== INPUT PARSING (SINGLE JQ) ====================
 # Use "_" placeholder for empty fields to handle consecutive tabs in TSV
 input_json=$(cat)
-IFS=$'\t' read -r model_id cwd used_pct sess_in sess_out transcript_path cc_session_cost lines_added lines_removed <<< \
-  $(echo "$input_json" | jq -r '[.model.id//"_", .workspace.current_dir//"_", .context_window.used_percentage//"_", .context_window.total_input_tokens//0, .context_window.total_output_tokens//0, .transcript_path//"_", .cost.total_cost_usd//"_", .cost.total_lines_added//0, .cost.total_lines_removed//0] | @tsv')
+IFS=$'\t' read -r model_id cwd used_pct transcript_path lines_added lines_removed <<< \
+  $(echo "$input_json" | jq -r '[.model.id//"_", .workspace.current_dir//"_", .context_window.used_percentage//"_", .transcript_path//"_", .cost.total_lines_added//0, .cost.total_lines_removed//0] | @tsv')
 # Convert placeholders back to empty strings
 [[ "$model_id" == "_" ]] && model_id=""
 [[ "$cwd" == "_" ]] && cwd=""
 [[ "$used_pct" == "_" ]] && used_pct=""
 [[ "$transcript_path" == "_" ]] && transcript_path=""
-[[ "$cc_session_cost" == "_" ]] && cc_session_cost=""
 [[ "$lines_added" == "_" ]] && lines_added=0
 [[ "$lines_removed" == "_" ]] && lines_removed=0
 
@@ -338,14 +337,8 @@ if [[ -n "$transcript_path" && -f "$transcript_path" ]]; then
   ' "$transcript_path" 2>/dev/null)
 fi
 
-# Use Claude Code's built-in session cost, then JSONL calculation, then fallback
-if [[ -n "$cc_session_cost" && "$cc_session_cost" != "0" ]]; then
-  sess_cost=$(printf "%.2f" "$cc_session_cost")
-elif [[ -n "$sess_cost_from_jsonl" && "$sess_cost_from_jsonl" != "0" && "$sess_cost_from_jsonl" != "null" ]]; then
-  sess_cost=$(printf "%.2f" "$sess_cost_from_jsonl")
-else
-  sess_cost="0.00"
-fi
+# Session cost from JSONL (includes all token types including cache)
+sess_cost=$(printf "%.2f" "${sess_cost_from_jsonl:-0}")
 
 # ==================== CALCULATIONS ====================
 total_tok=$((total_in + total_out))
