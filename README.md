@@ -17,9 +17,10 @@ severity1/
 │   └── lua/
 │       ├── config/   # Core configuration files
 │       └── plugins/  # Plugin configurations
-├── claude/           # Claude Code configuration
-│   ├── CLAUDE.md     # Global instructions
-│   └── settings.json # Global settings
+├── claude/                    # Claude Code configuration
+│   ├── CLAUDE.md              # Global instructions
+│   ├── settings.json          # Global settings
+│   └── statusline-command.sh  # Custom statusline script
 └── install.sh        # Automated installation script
 ```
 
@@ -42,7 +43,8 @@ severity1/
 ### Claude Code
 
 - Global instructions with tool preferences and code standards
-- Custom settings for hooks and environment
+- Custom settings with LSP tools, plugins, and permissions
+- Statusline script with Mairan theme colors, context bar, git status, cost tracking
 - Location: `~/.claude/`
 
 ## Installation
@@ -88,6 +90,8 @@ cp -r nvim/* ~/.config/nvim/
 mkdir -p ~/.claude
 cp claude/CLAUDE.md ~/.claude/CLAUDE.md
 cp claude/settings.json ~/.claude/settings.json
+cp claude/statusline-command.sh ~/.claude/statusline-command.sh
+chmod +x ~/.claude/statusline-command.sh
 ```
 
 ## Notes

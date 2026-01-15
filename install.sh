@@ -243,6 +243,8 @@ install_configs() {
     print_info "Installing Claude Code config"
     cp "$SCRIPT_DIR/claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
     cp "$SCRIPT_DIR/claude/settings.json" "$HOME/.claude/settings.json"
+    cp "$SCRIPT_DIR/claude/statusline-command.sh" "$HOME/.claude/statusline-command.sh"
+    chmod +x "$HOME/.claude/statusline-command.sh"
     print_success "Claude Code config installed"
 }
 
