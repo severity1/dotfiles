@@ -2,8 +2,7 @@
 # Claude Code statusline - Optimized version (<100ms target)
 # Line 1: [user][host][branch info][path]
 # Line 2: [SESSION id][model ctx%][tokens][cost][duration][tools]
-# Line 3: [TODAY: ...][WEEK: ...]
-# Line 4: [TOTAL: ...][SINCE: ... | peak: ... | avg: ...]
+# Line 3: [TOTAL: ...][SINCE: ... | peak: ... | avg: ...]
 
 # ==================== COLORS (Mairan Theme) ====================
 # Bold colors matching ~/.oh-my-bash/themes/mairan/mairan.theme.sh
@@ -15,6 +14,21 @@ P="\033[1;35m"  # Purple - model name
 D="\033[0;90m"  # Dim - secondary info
 C="\033[0;36m"  # Cyan - system overhead
 Z="\033[0m"     # Reset
+
+# ==================== CONSTANTS ====================
+BAR_LEN=12                    # Progress bar character width
+WARN_PCT=67                   # Context warning threshold (before autocompact zone)
+CTX_WINDOW_DEFAULT=200000     # Default context window size (Opus/Sonnet)
+
+# ==================== PLATFORM COMPATIBILITY ====================
+# date commands differ between GNU (Linux) and BSD (macOS)
+if [[ "$OSTYPE" == "darwin"* ]]; then
+  date_to_epoch() { date -j -f "%Y-%m-%dT%H:%M:%S" "${1%%.*}" +%s 2>/dev/null || echo 0; }
+  date_fmt() { date -j -f "%Y-%m-%d" "$1" "+%b %d, %Y" 2>/dev/null || echo "$1"; }
+else
+  date_to_epoch() { date -d "$1" +%s 2>/dev/null || echo 0; }
+  date_fmt() { date -d "$1" "+%b %d, %Y" 2>/dev/null || echo "$1"; }
+fi
 
 # ==================== HELPER FUNCTIONS ====================
 fmt_tok() {
@@ -36,10 +50,10 @@ fmt_dur() {
 }
 
 mk_bar() {
-  # 12-char bar: used (█) | free (░) | reserved/autocompact (▒)
+  # BAR_LEN-char bar: used (█) | free (░) | reserved/autocompact (▒)
   # Autocompact buffer is ~22.5% = 3 chars reserved at the end
   # Returns: "used_chars free_chars reserved_chars" for caller to colorize
-  local p=${1%.*} len=12; [[ -z "$p" ]] && p=0
+  local p=${1%.*} len=$BAR_LEN; [[ -z "$p" ]] && p=0
   local used=$((p*len/100))
   ((used > len)) && used=$len
   ((used < 0)) && used=0
@@ -52,7 +66,7 @@ mk_bar() {
 }
 
 mk_bar_colored() {
-  local p=$1 warn=67  # 10% before reserved space triggers warning
+  local p=$1 warn=$WARN_PCT
   read -r used free reserved <<< $(mk_bar "$p")
   # Build bar segments using printf repeat (DRY)
   local used_bar=$(printf '█%.0s' $(seq 1 $used 2>/dev/null))
@@ -69,7 +83,7 @@ mk_bar_colored() {
 # Split bar showing messages (jsonl) and system overhead (difference)
 # Args: $1=total_pct (CLI), $2=jsonl_pct (messages)
 mk_bar_split() {
-  local total=${1%.*} jsonl=${2%.*} len=12 warn=67
+  local total=${1%.*} jsonl=${2%.*} len=$BAR_LEN warn=$WARN_PCT
   [[ -z "$total" ]] && total=0
   [[ -z "$jsonl" ]] && jsonl=0
   ((jsonl > total)) && jsonl=$total
@@ -102,6 +116,9 @@ thresh_col() {
   ((v >= c)) && echo "$R" || { ((v >= w)) && echo "$Y" || echo "$G"; }
 }
 
+# Model rates ($/M tokens) - source of truth for cost calculations
+# Opus: $15 in, $75 out | Sonnet: $3 in, $15 out | Haiku: $0.25 in, $1.25 out
+# NOTE: Must match rates in jq query (stats parsing section) for total_cost accuracy
 calc_cost() {
   local m=$1 i=$2 o=$3 ip=3 op=15
   case "$m" in opus) ip=15;op=75;; sonnet) ip=3;op=15;; haiku) ip=0.25;op=1.25;; esac
@@ -116,11 +133,17 @@ hr_12() {
   echo "$((h-12))pm"
 }
 
+get_ctx_window() {
+  # All current Claude models have 200k context window
+  # Kept as function for future model-specific values
+  echo $CTX_WINDOW_DEFAULT
+}
+
 # Build context bar with optional split view - sets _ctx_bar global
 # Args: $1=pct (display %), $2=jsonl_pct (optional, for split bar)
 build_ctx_bar() {
   local pct=$1 jsonl_pct=$2 bar warn_icon=""
-  ((${pct%.*} >= 67)) && warn_icon="⚡"
+  ((${pct%.*} >= WARN_PCT)) && warn_icon="⚡"
   if [[ -n "$jsonl_pct" ]]; then
     bar=$(mk_bar_split "$pct" "$jsonl_pct")
   else
@@ -132,13 +155,14 @@ build_ctx_bar() {
 # ==================== INPUT PARSING (SINGLE JQ) ====================
 # Use "_" placeholder for empty fields to handle consecutive tabs in TSV
 input_json=$(cat)
-IFS=$'\t' read -r model_id cwd used_pct sess_in sess_out transcript_path <<< \
-  $(echo "$input_json" | jq -r '[.model.id//"_", .workspace.current_dir//"_", .context_window.used_percentage//"_", .context_window.total_input_tokens//0, .context_window.total_output_tokens//0, .transcript_path//"_"] | @tsv')
+IFS=$'\t' read -r model_id cwd used_pct sess_in sess_out transcript_path cc_session_cost <<< \
+  $(echo "$input_json" | jq -r '[.model.id//"_", .workspace.current_dir//"_", .context_window.used_percentage//"_", .context_window.total_input_tokens//0, .context_window.total_output_tokens//0, .transcript_path//"_", .cost.total_cost_usd//"_"] | @tsv')
 # Convert placeholders back to empty strings
 [[ "$model_id" == "_" ]] && model_id=""
 [[ "$cwd" == "_" ]] && cwd=""
 [[ "$used_pct" == "_" ]] && used_pct=""
 [[ "$transcript_path" == "_" ]] && transcript_path=""
+[[ "$cc_session_cost" == "_" ]] && cc_session_cost=""
 
 # Model short name
 model=""
@@ -210,22 +234,24 @@ fi
 
 # ==================== STATS FILE (SINGLE JQ) ====================
 stats_file="$HOME/.claude/stats-cache.json"
-today=$(date +%Y-%m-%d)
 
 # Defaults
 total_in=0 total_out=0 cache_read=0 total_msg=0 total_sess=0 peak_hr="" first_date=""
-week_tok=0 week_msg=0 week_tools=0 week_sess=0
-today_tok=0 today_msg=0 today_tools=0 today_sess=0
+total_cost_accurate=0
 
 if [[ -f "$stats_file" ]]; then
-  read -r total_in total_out cache_read total_msg total_sess peak_hr first_date \
-    week_tok week_msg week_tools week_sess today_tok today_msg today_tools today_sess <<< \
-    $(jq -r --arg today "$today" '
-      [(range(7) | (now - . * 86400) | strftime("%Y-%m-%d"))] as $wk |
-      ([.dailyModelTokens[] | select(.date as $d | $wk | index($d)) | .tokensByModel | to_entries | map(.value) | add] | add // 0) as $wt |
-      ([.dailyActivity[] | select(.date as $d | $wk | index($d))] | {m:(map(.messageCount//0)|add//0), t:(map(.toolCallCount//0)|add//0), s:(map(.sessionCount//0)|add//0)}) as $wa |
-      ([.dailyModelTokens[] | select(.date==$today) | .tokensByModel | to_entries | map(.value) | add] | add // 0) as $tt |
-      (.dailyActivity[] | select(.date==$today) // {}) as $ta |
+  read -r total_in total_out cache_read total_msg total_sess peak_hr first_date total_cost_accurate <<< \
+    $(jq -r '
+      # Total: accurate per-model costs using actual input/output tokens
+      # Rates: Opus $15/$75, Sonnet $3/$15, Haiku $0.25/$1.25 (in/out per M tokens)
+      (.modelUsage | to_entries | map(
+        (.key | if contains("opus") then {ip: 15, op: 75}
+                elif contains("sonnet") then {ip: 3, op: 15}
+                elif contains("haiku") then {ip: 0.25, op: 1.25}
+                else {ip: 3, op: 15} end) as $r |
+        ((.value.inputTokens // 0) * $r.ip + (.value.outputTokens // 0) * $r.op) / 1000000
+      ) | add // 0) as $tc |
+
       [
         (.modelUsage | to_entries | map(.value.inputTokens//0) | add // 0),
         (.modelUsage | to_entries | map(.value.outputTokens//0) | add // 0),
@@ -233,8 +259,7 @@ if [[ -f "$stats_file" ]]; then
         (.totalMessages // 0), (.totalSessions // 0),
         (.hourCounts | to_entries | max_by(.value) | .key // ""),
         (.dailyActivity | sort_by(.date) | .[0].date // ""),
-        $wt, $wa.m, $wa.t, $wa.s,
-        $tt, ($ta.messageCount//0), ($ta.toolCallCount//0), ($ta.sessionCount//0)
+        $tc
       ] | @tsv
     ' "$stats_file" 2>/dev/null)
 fi
@@ -251,51 +276,34 @@ if [[ -n "$transcript_path" && -f "$transcript_path" ]]; then
   first_ts=$(head -20 "$transcript_path" | jq -r 'select(.timestamp) | .timestamp' 2>/dev/null | head -1)
   last_ts=$(tail -50 "$transcript_path" | jq -r 'select(.timestamp) | .timestamp' 2>/dev/null | tail -1)
   if [[ -n "$first_ts" && -n "$last_ts" ]]; then
-    first_ep=$(date -d "$first_ts" +%s 2>/dev/null || echo 0)
-    last_ep=$(date -d "$last_ts" +%s 2>/dev/null || echo 0)
+    first_ep=$(date_to_epoch "$first_ts")
+    last_ep=$(date_to_epoch "$last_ts")
     ((first_ep > 0 && last_ep > 0)) && sess_dur=$(fmt_dur $((last_ep - first_ep)))
   fi
-  tool_count=$(grep -c '"tool_use' "$transcript_path" 2>/dev/null | tr -d '\n' || echo 0)
-  sess_msg_count=$(grep -c '"type":"user"' "$transcript_path" 2>/dev/null | tr -d '\n' || echo 0)
+  tool_count=$(grep -c '"tool_use' "$transcript_path" 2>/dev/null || echo 0)
+  sess_msg_count=$(grep -c '"type":"user"' "$transcript_path" 2>/dev/null || echo 0)
 
   # Calculate accurate context % from latest JSONL usage entry
   # Formula: (cache_read + cache_create + input + output) / context_window * 100
   ctx_tokens=$(tail -100 "$transcript_path" | jq -r 'select(.message.usage) | (.message.usage.cache_read_input_tokens // 0) + (.message.usage.cache_creation_input_tokens // 0) + (.message.usage.input_tokens // 0) + (.message.usage.output_tokens // 0)' 2>/dev/null | tail -1)
   if [[ -n "$ctx_tokens" && "$ctx_tokens" -gt 0 ]]; then
-    ctx_window=200000  # Opus/Sonnet context window
+    ctx_window=$(get_ctx_window "$model_id")
     ctx_from_jsonl=$(bc -l <<< "scale=1; $ctx_tokens * 100 / $ctx_window")
   fi
 fi
 
-sess_cost=$(calc_cost "$model" "$sess_in" "$sess_out")
+# Use Claude Code's built-in session cost when available, fallback to calculation
+if [[ -n "$cc_session_cost" && "$cc_session_cost" != "0" ]]; then
+  sess_cost=$(printf "%.2f" "$cc_session_cost")
+else
+  sess_cost=$(calc_cost "$model" "$sess_in" "$sess_out")
+fi
 
 # ==================== CALCULATIONS ====================
 total_tok=$((total_in + total_out))
-inp_ratio="0.30"
-((total_tok > 0)) && inp_ratio=$(bc -l <<< "$total_in / $total_tok" | xargs printf "%.4f")
 
-# Today fallback - use session stats when cache doesn't have today's data
-today_cached=true
-if ((today_tok == 0)); then
-  today_cached=false
-  today_tok=$((sess_in + sess_out))
-  today_msg=$sess_msg_count; today_tools=$tool_count
-  # Count sessions modified today using find with -printf (fast, single process)
-  today_start=$(date -d "today 00:00" +%s 2>/dev/null || echo 0)
-  today_sess=$(find ~/.claude/projects -maxdepth 2 -name "*.jsonl" -type f -printf '%T@\n' 2>/dev/null | awk -v ts="$today_start" '$1 >= ts {c++} END {print c+0}')
-  ((today_sess == 0)) && today_sess=1
-fi
-today_in=$(bc -l <<< "$today_tok * $inp_ratio" | xargs printf "%.0f")
-today_out=$((today_tok - today_in))
-today_cost=$(calc_cost "$model" "$today_in" "$today_out")
-
-# Week cost
-week_in=$(bc -l <<< "$week_tok * $inp_ratio" | xargs printf "%.0f")
-week_out=$((week_tok - week_in))
-week_cost=$(calc_cost "$model" "$week_in" "$week_out")
-
-# Total cost
-total_cost=$(calc_cost "$model" "$total_in" "$total_out")
+# Total cost (use accurate per-model calculation from jq)
+total_cost=$(printf "%.2f" "$total_cost_accurate")
 
 # Cache rate
 cache_rate=0
@@ -307,7 +315,7 @@ avg_cost="0.00"
 
 # Format dates
 first_fmt=""
-[[ -n "$first_date" && "$first_date" != "null" ]] && first_fmt=$(date -d "$first_date" "+%b %d, %Y" 2>/dev/null || echo "$first_date")
+[[ -n "$first_date" && "$first_date" != "null" ]] && first_fmt=$(date_fmt "$first_date")
 peak_fmt=$(hr_12 "$peak_hr")
 
 # ==================== BUILD OUTPUT (Mairan Colors) ====================
@@ -329,17 +337,9 @@ ctx_bar="$_ctx_bar"
 
 line2="[${O}SESSION ${G}${session_id}${Z}]${ctx_bar}[${G}$(fmt_tok "$sess_in")${Z} ${D}in${Z} | ${G}$(fmt_tok "$sess_out")${Z} ${D}out${Z} | $(thresh_col "$sess_cost" 1 10)\$${sess_cost}${Z}][${Y}${sess_dur}${Z}][${Y}${tool_count}${Z} ${D}tools${Z}]"
 
-# Line 3: [TODAY][WEEK]
-today_label="TODAY"; $today_cached || today_label="TODAY*"
-tc=$(thresh_col "$today_msg" 20 50)
-wc=$(thresh_col "$week_msg" 100 300)
-
-line3="[${O}${today_label}:${Z} ${G}$(fmt_tok "$today_tok")${Z} ${D}tok${Z} | ${tc}${today_msg}${Z} ${D}msg${Z} | ${G}$(fmt_tok "$today_tools")${Z} ${D}tools${Z} | ${G}${today_sess}${Z} ${D}sess${Z} | $(thresh_col "$today_cost" 1 10)\$${today_cost}${Z}]"
-line3+="[${O}WEEK:${Z} ${G}$(fmt_tok "$week_tok")${Z} ${D}tok${Z} | ${wc}${week_msg}${Z} ${D}msg${Z} | ${G}$(fmt_tok "$week_tools")${Z} ${D}tools${Z} | ${G}${week_sess}${Z} ${D}sess${Z} | $(thresh_col "$week_cost" 10 50)\$${week_cost}${Z}]"
-
-# Line 4: [TOTAL][SINCE]
-line4="[${O}TOTAL:${Z} ${G}$(fmt_tok "$total_tok")${Z} ${D}tok${Z} | ${G}$(fmt_tok "$total_msg")${Z} ${D}msg${Z} | ${G}${total_sess}${Z} ${D}sess${Z} | $(thresh_col "$total_cost" 100 500)\$${total_cost}${Z} | ${G}${cache_rate}%${Z} ${D}cached${Z}]"
-line4+="[${O}SINCE:${Z} ${G}${first_fmt}${Z} | ${Y}peak:${Z} ${G}${peak_fmt}${Z} | ${G}avg: \$${avg_cost}${Z}${D}/sess${Z}]"
+# Line 3: [TOTAL][SINCE]
+line3="[${O}TOTAL:${Z} ${G}$(fmt_tok "$total_tok")${Z} ${D}tok${Z} | ${G}$(fmt_tok "$total_msg")${Z} ${D}msg${Z} | ${G}${total_sess}${Z} ${D}sess${Z} | $(thresh_col "$total_cost" 100 500)\$${total_cost}${Z} | ${G}${cache_rate}%${Z} ${D}cached${Z}]"
+line3+="[${O}SINCE:${Z} ${G}${first_fmt}${Z} | ${Y}peak:${Z} ${G}${peak_fmt}${Z} | ${G}avg: \$${avg_cost}${Z}${D}/sess${Z}]"
 
 # ==================== OUTPUT ====================
-printf "%b\n%b\n%b\n%b" "$line1" "$line2" "$line3" "$line4"
+printf "%b\n%b\n%b" "$line1" "$line2" "$line3"
