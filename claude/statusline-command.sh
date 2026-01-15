@@ -118,11 +118,13 @@ thresh_col() {
 }
 
 # Model rates ($/M tokens) - source of truth for cost calculations
-# Opus: $15 in, $75 out | Sonnet: $3 in, $15 out | Haiku: $0.25 in, $1.25 out
+# From Anthropic docs (Jan 2026): https://platform.claude.com/docs/en/about-claude/pricing
+# Opus 4.5: $5 in, $25 out | Sonnet 4.5: $3 in, $15 out | Haiku 4.5: $1 in, $5 out
+# Cache multipliers: read=0.1x input, write=1.25x input
 # NOTE: Must match rates in jq query (stats parsing section) for total_cost accuracy
 calc_cost() {
   local m=$1 i=$2 o=$3 ip=3 op=15
-  case "$m" in opus) ip=15;op=75;; sonnet) ip=3;op=15;; haiku) ip=0.25;op=1.25;; esac
+  case "$m" in opus) ip=5;op=25;; sonnet) ip=3;op=15;; haiku) ip=1;op=5;; esac
   bc -l <<< "scale=2; ($i * $ip + $o * $op) / 1000000" | xargs printf "%.2f"
 }
 
@@ -246,23 +248,39 @@ if [[ -f "$stats_file" ]]; then
   read -r total_in total_out cache_read total_msg total_sess peak_hr first_date \
     total_cost_accurate longest_dur longest_msgs model_breakdown <<< \
     $(jq -r '
-      # Total: accurate per-model costs using actual input/output tokens
-      # Rates: Opus $15/$75, Sonnet $3/$15, Haiku $0.25/$1.25 (in/out per M tokens)
+      # Total: accurate per-model costs INCLUDING cache tokens
+      # Rates from Anthropic docs (Jan 2026): https://platform.claude.com/docs/en/about-claude/pricing
+      # Opus 4.5: $5/$25, Sonnet 4.5: $3/$15, Haiku 4.5: $1/$5
+      # Cache: read=0.1x input, write=1.25x input
       (.modelUsage | to_entries | map(
-        (.key | if contains("opus") then {ip: 15, op: 75}
-                elif contains("sonnet") then {ip: 3, op: 15}
-                elif contains("haiku") then {ip: 0.25, op: 1.25}
-                else {ip: 3, op: 15} end) as $r |
-        ((.value.inputTokens // 0) * $r.ip + (.value.outputTokens // 0) * $r.op) / 1000000
+        (.key | if contains("opus-4-5") then {ip:5, op:25, cr:0.50, cw:6.25}
+                elif contains("sonnet-4-5") then {ip:3, op:15, cr:0.30, cw:3.75}
+                elif contains("haiku-4-5") then {ip:1, op:5, cr:0.10, cw:1.25}
+                elif contains("haiku-3-5") then {ip:0.80, op:4, cr:0.08, cw:1}
+                elif contains("opus") then {ip:15, op:75, cr:1.50, cw:18.75}
+                elif contains("sonnet") then {ip:3, op:15, cr:0.30, cw:3.75}
+                elif contains("haiku") then {ip:0.25, op:1.25, cr:0.03, cw:0.30}
+                else {ip:3, op:15, cr:0.30, cw:3.75} end) as $r |
+        (((.value.inputTokens // 0) * $r.ip) +
+         ((.value.outputTokens // 0) * $r.op) +
+         ((.value.cacheReadInputTokens // 0) * $r.cr) +
+         ((.value.cacheCreationInputTokens // 0) * $r.cw)) / 1000000
       ) | add // 0) as $tc |
 
-      # Model breakdown: calculate % of total cost per model
+      # Model breakdown: calculate % of total cost per model (including cache)
       (.modelUsage | to_entries | map(
-        (.key | if contains("opus") then {n:"O",ip:15,op:75}
-                elif contains("sonnet") then {n:"S",ip:3,op:15}
-                elif contains("haiku") then {n:"H",ip:0.25,op:1.25}
-                else {n:"?",ip:3,op:15} end) as $r |
-        {name: $r.n, cost: (((.value.inputTokens//0)*$r.ip + (.value.outputTokens//0)*$r.op)/1000000)}
+        (.key | if contains("opus-4-5") then {n:"O",ip:5,op:25,cr:0.50,cw:6.25}
+                elif contains("sonnet-4-5") then {n:"S",ip:3,op:15,cr:0.30,cw:3.75}
+                elif contains("haiku-4-5") then {n:"H",ip:1,op:5,cr:0.10,cw:1.25}
+                elif contains("haiku-3-5") then {n:"H",ip:0.80,op:4,cr:0.08,cw:1}
+                elif contains("opus") then {n:"O",ip:15,op:75,cr:1.50,cw:18.75}
+                elif contains("sonnet") then {n:"S",ip:3,op:15,cr:0.30,cw:3.75}
+                elif contains("haiku") then {n:"H",ip:0.25,op:1.25,cr:0.03,cw:0.30}
+                else {n:"?",ip:3,op:15,cr:0.30,cw:3.75} end) as $r |
+        {name: $r.n, cost: ((((.value.inputTokens//0)*$r.ip) +
+                            ((.value.outputTokens//0)*$r.op) +
+                            ((.value.cacheReadInputTokens//0)*$r.cr) +
+                            ((.value.cacheCreationInputTokens//0)*$r.cw))/1000000)}
       ) | if $tc > 0 then map("\(.name):\(.cost/$tc*100|floor)%") | join(" ") else "" end) as $mb |
 
       [
