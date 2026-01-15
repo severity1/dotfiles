@@ -387,7 +387,7 @@ line2="[${O}SESSION ${G}${session_id}${Z}]${ctx_bar}[${G}${sess_msg_count}${Z} $
 
 # Line 3: [TOTAL][SINCE] - cleaned up
 line3="[${O}TOTAL:${Z} ${G}$(fmt_tok "$total_tok")${Z} ${D}tok${Z} | ${G}$(fmt_tok "$total_msg")${Z} ${D}msg${Z} | ${G}${total_sess}${Z} ${D}sess${Z} | $(thresh_col "$total_cost" 100 500)\$${total_cost}${Z} | ${G}${cache_rate}%${Z} ${D}cached${Z}]"
-line3+="[${O}SINCE:${Z} ${G}${first_fmt}${Z} | ${G}avg: \$${avg_cost}${Z}${D}/sess${Z}]"
+line3+="[${O}SINCE:${Z} ${G}${first_fmt}${Z} | ${R}avg: \$${avg_cost}${Z}${D}/sess${Z}]"
 
 # Line 4: RECORDS - longest session, peak hour, model mix
 longest_rec=""
