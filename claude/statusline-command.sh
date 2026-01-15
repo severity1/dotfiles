@@ -383,7 +383,7 @@ if ((lines_added > 0 || lines_removed > 0)); then
 fi
 
 # Line 2: SESSION with msg/tools, cost, duration, lines changed
-line2="[${O}SESSION ${G}${session_id}${Z}]${ctx_bar}[${G}${sess_msg_count}${Z} ${D}msg${Z} | ${Y}${tool_count}${Z} ${D}tools${Z}][$(thresh_col "$sess_cost" 1 10)\$${sess_cost}${Z}][${Y}${sess_dur}${Z}]${lines_diff}"
+line2="[${O}SESSION ${G}${session_id}${Z}]${ctx_bar}[${G}${sess_msg_count}${Z} ${D}msg${Z} | ${G}${tool_count}${Z} ${D}tools${Z}][$(thresh_col "$sess_cost" 1 10)\$${sess_cost}${Z}][${G}${sess_dur}${Z}]${lines_diff}"
 
 # Line 3: [TOTAL][SINCE] - cleaned up
 line3="[${O}TOTAL:${Z} ${G}$(fmt_tok "$total_tok")${Z} ${D}tok${Z} | ${G}$(fmt_tok "$total_msg")${Z} ${D}msg${Z} | ${G}${total_sess}${Z} ${D}sess${Z} | $(thresh_col "$total_cost" 100 500)\$${total_cost}${Z} | ${G}${cache_rate}%${Z} ${D}cached${Z}]"
