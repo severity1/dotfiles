@@ -4,6 +4,11 @@
 # Line 2: [SESSION id][model ctx%][msg|tools][$cost][duration][+lines/-lines]
 # Line 3: [TOTAL: tok|msg|sess|$cost|cached%][SINCE: date|avg]
 # Line 4: [RECORDS: longest:dur/msg | peak:hour | mix:O:x%S:y%]
+#
+# Model rates ($/M tokens) - defined in jq queries for DRY
+# Source: https://platform.claude.com/docs/en/about-claude/pricing
+# Opus 4.5: $5/$25, Sonnet 4.5: $3/$15, Haiku 4.5: $1/$5
+# Cache: read=0.1x input, write=1.25x input
 
 # ==================== COLORS (Mairan Theme) ====================
 # Bold colors matching ~/.oh-my-bash/themes/mairan/mairan.theme.sh
@@ -115,17 +120,6 @@ thresh_col() {
   local v=${1%.*} w=${2:-60} c=${3:-80}
   [[ -z "$v" ]] && v=0
   ((v >= c)) && echo "$R" || { ((v >= w)) && echo "$Y" || echo "$G"; }
-}
-
-# Model rates ($/M tokens) - source of truth for cost calculations
-# From Anthropic docs (Jan 2026): https://platform.claude.com/docs/en/about-claude/pricing
-# Opus 4.5: $5 in, $25 out | Sonnet 4.5: $3 in, $15 out | Haiku 4.5: $1 in, $5 out
-# Cache multipliers: read=0.1x input, write=1.25x input
-# NOTE: Must match rates in jq query (stats parsing section) for total_cost accuracy
-calc_cost() {
-  local m=$1 i=$2 o=$3 ip=3 op=15
-  case "$m" in opus) ip=5;op=25;; sonnet) ip=3;op=15;; haiku) ip=1;op=5;; esac
-  bc -l <<< "scale=2; ($i * $ip + $o * $op) / 1000000" | xargs printf "%.2f"
 }
 
 hr_12() {
@@ -324,13 +318,33 @@ if [[ -n "$transcript_path" && -f "$transcript_path" ]]; then
     ctx_window=$(get_ctx_window "$model_id")
     ctx_from_jsonl=$(bc -l <<< "scale=1; $ctx_tokens * 100 / $ctx_window")
   fi
+
+  # Calculate session cost from JSONL usage (same rate pattern as TOTAL)
+  # Rates from Anthropic docs - same as stats-cache calculation for DRY
+  sess_cost_from_jsonl=$(jq -rs --arg model "$model_id" '
+    [.[] | .message.usage // empty] |
+    ($model | if contains("opus-4-5") then {ip:5, op:25, cr:0.50, cw:6.25}
+              elif contains("sonnet-4-5") then {ip:3, op:15, cr:0.30, cw:3.75}
+              elif contains("haiku-4-5") then {ip:1, op:5, cr:0.10, cw:1.25}
+              elif contains("haiku-3-5") then {ip:0.80, op:4, cr:0.08, cw:1}
+              elif contains("opus") then {ip:15, op:75, cr:1.50, cw:18.75}
+              elif contains("sonnet") then {ip:3, op:15, cr:0.30, cw:3.75}
+              elif contains("haiku") then {ip:0.25, op:1.25, cr:0.03, cw:0.30}
+              else {ip:3, op:15, cr:0.30, cw:3.75} end) as $r |
+    ((map(.input_tokens // 0) | add) * $r.ip +
+     (map(.output_tokens // 0) | add) * $r.op +
+     (map(.cache_read_input_tokens // 0) | add) * $r.cr +
+     (map(.cache_creation_input_tokens // 0) | add) * $r.cw) / 1000000
+  ' "$transcript_path" 2>/dev/null)
 fi
 
-# Use Claude Code's built-in session cost when available, fallback to calculation
+# Use Claude Code's built-in session cost, then JSONL calculation, then fallback
 if [[ -n "$cc_session_cost" && "$cc_session_cost" != "0" ]]; then
   sess_cost=$(printf "%.2f" "$cc_session_cost")
+elif [[ -n "$sess_cost_from_jsonl" && "$sess_cost_from_jsonl" != "0" && "$sess_cost_from_jsonl" != "null" ]]; then
+  sess_cost=$(printf "%.2f" "$sess_cost_from_jsonl")
 else
-  sess_cost=$(calc_cost "$model" "$sess_in" "$sess_out")
+  sess_cost="0.00"
 fi
 
 # ==================== CALCULATIONS ====================
