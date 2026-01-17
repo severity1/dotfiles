@@ -16,9 +16,9 @@ O="\033[1;33m"  # Orange - brackets, host
 G="\033[1;32m"  # Green - user, branch, clean status, path
 Y="\033[0;33m"  # Yellow/Brown - dirty status, warnings
 R="\033[0;31m"  # Red - errors, critical
-P="\033[1;35m"  # Purple - model name
+P="\033[1;35m"  # Purple - model name, system/Claude context
 D="\033[0;90m"  # Dim - secondary info
-C="\033[0;36m"  # Cyan - system overhead
+C="\033[0;36m"  # Cyan - unused
 W="\033[0;37m"  # Gray/White - initial startup context
 Z="\033[0m"     # Reset
 
@@ -29,7 +29,7 @@ BAR_USABLE=9                  # Chars for actual usage (BAR_LEN - BAR_RESERVED)
 CTX_WINDOW=200000             # Context window size
 CTX_RESERVED=50000            # Autocompact zone (~25%)
 CTX_USABLE=150000             # Usable context (CTX_WINDOW - CTX_RESERVED)
-WARN_PCT=67                   # Warning threshold
+# Thresholds: 30% degraded, 65% warning, 70% critical, 75% compacting
 
 # Shade density for granular bar animation (1/4 to 4/4)
 SHADE_BLOCKS=("" "░" "▒" "▓")
@@ -63,74 +63,77 @@ fmt_dur() {
   echo "${m}m"
 }
 
-# Extract initial tokens (all cached system content - prompts, tools, CLAUDE.md)
-get_initial_tokens() {
-  local json="$1"
-  echo "$json" | jq -r '
-    (.cache_read_input_tokens // 0) +
-    (.cache_creation_input_tokens // 0)
-  ' 2>/dev/null || echo 0
-}
-
-# Extract "ours" tokens (actual conversation content)
-get_ours_tokens() {
-  local json="$1"
-  echo "$json" | jq -r '
-    (.input_tokens // 0) +
-    (.output_tokens // 0)
+# Get baseline context (first message's cached content = system overhead)
+# Includes both cache_read (cache hit) and cache_creation (cache miss)
+get_baseline_tokens() {
+  local transcript="$1"
+  head -50 "$transcript" | jq -s -r '
+    [.[] | .message.usage | select(.) |
+      ((.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0))
+    ][0] // 0
   ' 2>/dev/null || echo 0
 }
 
 # Build context bar from token counts
-# Args: $1=initial_tokens (cache_read+cache_create), $2=ours_tokens (input+output)
-# Output: colored bar string with shade density for smooth growth
+# Args: $1=initial_tokens (baseline), $2=ours_tokens (growth above baseline)
+# Output: colored bar string with smooth fill - each position fills completely before next starts
 mk_ctx_bar() {
   local initial=${1:-0} ours=${2:-0}
   local usable=$BAR_USABLE reserved=$BAR_RESERVED
-  local total=$((initial + ours))
-  local quarters=$((usable * 4))  # Total 1/4ths available (36 for 9 chars)
+  local quarters=$((usable * 4))
 
-  # Convert tokens to quarters (more granular than chars)
-  local init_quarters=0 ours_quarters=0
+  # Convert tokens to quarters
+  local init_q=0 ours_q=0
   if ((initial > 0)); then
-    init_quarters=$(( (initial * quarters + CTX_USABLE - 1) / CTX_USABLE ))
-    ((init_quarters > quarters)) && init_quarters=$quarters
+    init_q=$(( (initial * quarters + CTX_USABLE - 1) / CTX_USABLE ))
+    ((init_q > quarters)) && init_q=$quarters
   fi
   if ((ours > 0)); then
-    ours_quarters=$(( (ours * quarters + CTX_USABLE - 1) / CTX_USABLE ))
-    ((ours_quarters > quarters - init_quarters)) && ours_quarters=$((quarters - init_quarters))
+    ours_q=$(( (ours * quarters + CTX_USABLE - 1) / CTX_USABLE ))
+    ((ours_q > quarters - init_q)) && ours_q=$((quarters - init_q))
   fi
-  local free_quarters=$((quarters - init_quarters - ours_quarters))
-  ((free_quarters < 0)) && free_quarters=0
 
-  # Build bar with shade density
-  local init_bar="" ours_bar="" free_bar="" res_bar=""
-
-  # Initial segment (cyan) - use ▓ for full, shades for partial
-  local init_full=$((init_quarters / 4)) init_frac=$((init_quarters % 4))
-  ((init_full > 0)) && init_bar=$(printf '▓%.0s' $(seq 1 $init_full))
-  ((init_frac > 0)) && init_bar+="${SHADE_BLOCKS[$init_frac]}"
-
-  # Ours segment (green) - shade density for smooth growth
-  local ours_full=$((ours_quarters / 4)) ours_frac=$((ours_quarters % 4))
-  ((ours_full > 0)) && ours_bar=$(printf '█%.0s' $(seq 1 $ours_full))
-  ((ours_frac > 0)) && ours_bar+="${SHADE_BLOCKS[$ours_frac]}"
-
-  # Free segment (dim) - use ░ for full chars
-  local free_full=$((free_quarters / 4))
-  ((free_full > 0)) && free_bar=$(printf '░%.0s' $(seq 1 $free_full))
-
-  # Reserved segment (always full chars)
-  ((reserved > 0)) && res_bar=$(printf '▒%.0s' $(seq 1 $reserved))
-
-  # Color based on total usage percentage
+  # Color based on proximity to autocompact zone (75% of window)
+  # Green until 65%, then Yellow (warning), Orange (critical), Red (compacting)
+  local total=$((initial + ours))
   local pct=$((total * 100 / CTX_WINDOW))
   local ours_color="$G"
-  ((pct >= 60)) && ours_color="$Y"
-  ((pct >= 80)) && ours_color="$R"
-  ((pct >= WARN_PCT && pct < 80)) && ours_color="$O"
+  ((pct >= 65)) && ours_color="$Y"
+  ((pct >= 70)) && ours_color="$O"
+  ((pct >= 75)) && ours_color="$R"
 
-  echo "${C}${init_bar}${Z}${ours_color}${ours_bar}${Z}${D}${free_bar}${Z}${Y}${res_bar}${Z}"
+  # Build bar position by position
+  local bar=""
+  for ((pos=0; pos<usable; pos++)); do
+    local pos_start=$((pos * 4))
+    local pos_end=$((pos_start + 4))
+
+    if ((init_q >= pos_end)); then
+      # Fully purple (system/Claude context)
+      bar+="${P}▓${Z}"
+    elif ((init_q > pos_start)); then
+      # Partial purple
+      local fill=$((init_q - pos_start))
+      bar+="${P}${SHADE_BLOCKS[$fill]}${Z}"
+    elif ((init_q + ours_q >= pos_end)); then
+      # Fully green
+      bar+="${ours_color}█${Z}"
+    elif ((init_q + ours_q > pos_start)); then
+      # Partial green
+      local fill=$((init_q + ours_q - pos_start))
+      bar+="${ours_color}${SHADE_BLOCKS[$fill]}${Z}"
+    else
+      # Empty
+      bar+="${D}░${Z}"
+    fi
+  done
+
+  # Threshold marker and reserved segment
+  local marker="${D}│${Z}"
+  local res_bar=""
+  ((reserved > 0)) && res_bar=$(printf '▒%.0s' $(seq 1 $reserved))
+
+  echo "${bar}${marker}${Y}${res_bar}${Z}"
 }
 
 # Generic threshold color: val, warn_threshold, crit_threshold
@@ -310,11 +313,24 @@ if [[ -n "$transcript_path" && -f "$transcript_path" ]]; then
   tool_count=$(grep -c '"tool_use' "$transcript_path" 2>/dev/null || echo 0)
   sess_msg_count=$(grep -c '"type":"user"' "$transcript_path" 2>/dev/null || echo 0)
 
+  # Get baseline (first message's cache_read = pre-session system context)
+  baseline_tokens=$(get_baseline_tokens "$transcript_path")
+
   # Get latest usage entry for current state
   latest_usage=$(tail -100 "$transcript_path" | jq -s '[.[] | .message.usage // empty] | .[-1]' 2>/dev/null)
   if [[ -n "$latest_usage" && "$latest_usage" != "null" ]]; then
-    initial_tokens=$(get_initial_tokens "$latest_usage")
-    ours_tokens=$(get_ours_tokens "$latest_usage")
+    # Total context = cache_read + cache_creation + input + output
+    total_ctx=$(echo "$latest_usage" | jq -r '
+      (.cache_read_input_tokens // 0) +
+      (.cache_creation_input_tokens // 0) +
+      (.input_tokens // 0) +
+      (.output_tokens // 0)
+    ' 2>/dev/null || echo 0)
+
+    # Initial = baseline (static), Ours = growth above baseline
+    initial_tokens=$baseline_tokens
+    ours_tokens=$((total_ctx - baseline_tokens))
+    ((ours_tokens < 0)) && ours_tokens=0
   fi
 
   # Calculate session cost from JSONL usage (same rate pattern as TOTAL)
@@ -384,9 +400,14 @@ if [[ -n "$model" ]]; then
   ((total_tokens > 0)) && pct=$((total_tokens * 100 / CTX_WINDOW))
   [[ -n "$used_pct" && "$used_pct" != "0" ]] && pct=${used_pct%.*}
 
-  warn_icon=""
-  ((pct >= WARN_PCT)) && warn_icon="⚡"
-  ctx_bar="[${P}${model}${Z} ctx:${bar} $(thresh_col "$pct" 60 80)${warn_icon}${pct}%${Z}]"
+  # Emoji based on proximity to autocompact
+  # 🧠 optimal, 🚛 warning (65%), 🗑️ critical (70%), ♻️ compacting (75%+)
+  ctx_emoji="🧠"
+  ((pct >= 65)) && ctx_emoji="🚛"
+  ((pct >= 70)) && ctx_emoji="🗑️"
+  ((pct >= 75)) && ctx_emoji="♻️"
+
+  ctx_bar="[${P}${model}${Z} ${ctx_emoji} ctx:${bar} $(thresh_col "$pct" 65 70)${pct}%${Z}]"
 fi
 
 # Format lines changed for session
