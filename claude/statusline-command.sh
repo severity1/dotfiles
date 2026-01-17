@@ -19,12 +19,20 @@ R="\033[0;31m"  # Red - errors, critical
 P="\033[1;35m"  # Purple - model name
 D="\033[0;90m"  # Dim - secondary info
 C="\033[0;36m"  # Cyan - system overhead
+W="\033[0;37m"  # Gray/White - initial startup context
 Z="\033[0m"     # Reset
 
 # ==================== CONSTANTS ====================
-BAR_LEN=12                    # Progress bar character width
-WARN_PCT=67                   # Context warning threshold (before autocompact zone)
-CTX_WINDOW_DEFAULT=200000     # Default context window size (Opus/Sonnet)
+BAR_LEN=12                    # Total bar character width
+BAR_RESERVED=3                # Reserved chars for autocompact zone (~25%)
+BAR_USABLE=9                  # Chars for actual usage (BAR_LEN - BAR_RESERVED)
+CTX_WINDOW=200000             # Context window size
+CTX_RESERVED=50000            # Autocompact zone (~25%)
+CTX_USABLE=150000             # Usable context (CTX_WINDOW - CTX_RESERVED)
+WARN_PCT=67                   # Warning threshold
+
+# Shade density for granular bar animation (1/4 to 4/4)
+SHADE_BLOCKS=("" "░" "▒" "▓")
 
 # ==================== PLATFORM COMPATIBILITY ====================
 # date commands differ between GNU (Linux) and BSD (macOS)
@@ -55,64 +63,74 @@ fmt_dur() {
   echo "${m}m"
 }
 
-mk_bar() {
-  # BAR_LEN-char bar: used (█) | free (░) | reserved/autocompact (▒)
-  # Autocompact buffer is ~22.5% = 3 chars reserved at the end
-  # Returns: "used_chars free_chars reserved_chars" for caller to colorize
-  local p=${1%.*} len=$BAR_LEN; [[ -z "$p" ]] && p=0
-  local used=$((p*len/100))
-  ((used > len)) && used=$len
-  ((used < 0)) && used=0
-  local reserved=3  # ~22.5% autocompact buffer (3/12 = 25%)
-  local free=$((len-used-reserved))
-  ((free < 0)) && free=0
-  # If usage is high, it eats into reserved space
-  ((used > len-reserved)) && reserved=$((len-used)) && free=0
-  echo "$used $free $reserved"
+# Extract initial tokens (all cached system content - prompts, tools, CLAUDE.md)
+get_initial_tokens() {
+  local json="$1"
+  echo "$json" | jq -r '
+    (.cache_read_input_tokens // 0) +
+    (.cache_creation_input_tokens // 0)
+  ' 2>/dev/null || echo 0
 }
 
-mk_bar_colored() {
-  local p=$1 warn=$WARN_PCT
-  read -r used free reserved <<< $(mk_bar "$p")
-  # Build bar segments using printf repeat (DRY)
-  local used_bar=$(printf '█%.0s' $(seq 1 $used 2>/dev/null))
-  local free_bar=$(printf '░%.0s' $(seq 1 $free 2>/dev/null))
-  local res_bar=$(printf '▒%.0s' $(seq 1 $reserved 2>/dev/null))
-  # Color based on threshold: warning zone (67-79%) = orange, critical (>=80) = red
-  local uc=$(thresh_col "$p" 60 80)
-  local pi=${p%.*}  # Strip decimal for arithmetic
-  ((pi >= warn && pi < 80)) && uc="$O"
-  # Combine with colors
-  echo "${uc}${used_bar}${Z}${D}${free_bar}${Z}${Y}${res_bar}${Z}"
+# Extract "ours" tokens (actual conversation content)
+get_ours_tokens() {
+  local json="$1"
+  echo "$json" | jq -r '
+    (.input_tokens // 0) +
+    (.output_tokens // 0)
+  ' 2>/dev/null || echo 0
 }
 
-# Split bar showing messages (jsonl) and system overhead (difference)
-# Args: $1=total_pct (CLI), $2=jsonl_pct (messages)
-mk_bar_split() {
-  local total=${1%.*} jsonl=${2%.*} len=$BAR_LEN warn=$WARN_PCT
-  [[ -z "$total" ]] && total=0
-  [[ -z "$jsonl" ]] && jsonl=0
-  ((jsonl > total)) && jsonl=$total
+# Build context bar from token counts
+# Args: $1=initial_tokens (cache_read+cache_create), $2=ours_tokens (input+output)
+# Output: colored bar string with shade density for smooth growth
+mk_ctx_bar() {
+  local initial=${1:-0} ours=${2:-0}
+  local usable=$BAR_USABLE reserved=$BAR_RESERVED
+  local total=$((initial + ours))
+  local quarters=$((usable * 4))  # Total 1/4ths available (36 for 9 chars)
 
-  # Reuse mk_bar for base calculation (DRY)
-  read -r total_chars free reserved <<< $(mk_bar "$total")
+  # Convert tokens to quarters (more granular than chars)
+  local init_quarters=0 ours_quarters=0
+  if ((initial > 0)); then
+    init_quarters=$(( (initial * quarters + CTX_USABLE - 1) / CTX_USABLE ))
+    ((init_quarters > quarters)) && init_quarters=$quarters
+  fi
+  if ((ours > 0)); then
+    ours_quarters=$(( (ours * quarters + CTX_USABLE - 1) / CTX_USABLE ))
+    ((ours_quarters > quarters - init_quarters)) && ours_quarters=$((quarters - init_quarters))
+  fi
+  local free_quarters=$((quarters - init_quarters - ours_quarters))
+  ((free_quarters < 0)) && free_quarters=0
 
-  # Split used portion into messages and system overhead
-  local msg_chars=$((jsonl * len / 100))
-  local sys_chars=$((total_chars - msg_chars))
-  ((msg_chars < 0)) && msg_chars=0
-  ((sys_chars < 0)) && sys_chars=0
+  # Build bar with shade density
+  local init_bar="" ours_bar="" free_bar="" res_bar=""
 
-  # Build bar segments
-  local msg_bar=$(printf '█%.0s' $(seq 1 $msg_chars 2>/dev/null))
-  local sys_bar=$(printf '▓%.0s' $(seq 1 $sys_chars 2>/dev/null))
-  local free_bar=$(printf '░%.0s' $(seq 1 $free 2>/dev/null))
-  local res_bar=$(printf '▒%.0s' $(seq 1 $reserved 2>/dev/null))
+  # Initial segment (cyan) - use ▓ for full, shades for partial
+  local init_full=$((init_quarters / 4)) init_frac=$((init_quarters % 4))
+  ((init_full > 0)) && init_bar=$(printf '▓%.0s' $(seq 1 $init_full))
+  ((init_frac > 0)) && init_bar+="${SHADE_BLOCKS[$init_frac]}"
 
-  # Colors: messages=green (threshold), system=cyan, free=dim, reserved=yellow
-  local mc=$(thresh_col "$total" 60 80)
-  ((total >= warn && total < 80)) && mc="$O"
-  echo "${mc}${msg_bar}${Z}${C}${sys_bar}${Z}${D}${free_bar}${Z}${Y}${res_bar}${Z}"
+  # Ours segment (green) - shade density for smooth growth
+  local ours_full=$((ours_quarters / 4)) ours_frac=$((ours_quarters % 4))
+  ((ours_full > 0)) && ours_bar=$(printf '█%.0s' $(seq 1 $ours_full))
+  ((ours_frac > 0)) && ours_bar+="${SHADE_BLOCKS[$ours_frac]}"
+
+  # Free segment (dim) - use ░ for full chars
+  local free_full=$((free_quarters / 4))
+  ((free_full > 0)) && free_bar=$(printf '░%.0s' $(seq 1 $free_full))
+
+  # Reserved segment (always full chars)
+  ((reserved > 0)) && res_bar=$(printf '▒%.0s' $(seq 1 $reserved))
+
+  # Color based on total usage percentage
+  local pct=$((total * 100 / CTX_WINDOW))
+  local ours_color="$G"
+  ((pct >= 60)) && ours_color="$Y"
+  ((pct >= 80)) && ours_color="$R"
+  ((pct >= WARN_PCT && pct < 80)) && ours_color="$O"
+
+  echo "${C}${init_bar}${Z}${ours_color}${ours_bar}${Z}${D}${free_bar}${Z}${Y}${res_bar}${Z}"
 }
 
 # Generic threshold color: val, warn_threshold, crit_threshold
@@ -128,25 +146,6 @@ hr_12() {
   ((h<12)) && echo "${h}am" && return
   ((h==12)) && echo "12pm" && return
   echo "$((h-12))pm"
-}
-
-get_ctx_window() {
-  # All current Claude models have 200k context window
-  # Kept as function for future model-specific values
-  echo $CTX_WINDOW_DEFAULT
-}
-
-# Build context bar with optional split view - sets _ctx_bar global
-# Args: $1=pct (display %), $2=jsonl_pct (optional, for split bar)
-build_ctx_bar() {
-  local pct=$1 jsonl_pct=$2 bar warn_icon=""
-  ((${pct%.*} >= WARN_PCT)) && warn_icon="⚡"
-  if [[ -n "$jsonl_pct" ]]; then
-    bar=$(mk_bar_split "$pct" "$jsonl_pct")
-  else
-    bar=$(mk_bar_colored "$pct")
-  fi
-  _ctx_bar="[${P}${model}${Z} ctx:${bar} $(thresh_col "$pct" 60 80)${warn_icon}${pct}%${Z}]"
 }
 
 # ==================== INPUT PARSING (SINGLE JQ) ====================
@@ -298,7 +297,8 @@ session_id=""
 sess_dur="0m"
 tool_count=0
 sess_msg_count=0
-ctx_from_jsonl=""
+initial_tokens=0
+ours_tokens=0
 if [[ -n "$transcript_path" && -f "$transcript_path" ]]; then
   first_ts=$(head -20 "$transcript_path" | jq -r 'select(.timestamp) | .timestamp' 2>/dev/null | head -1)
   last_ts=$(tail -50 "$transcript_path" | jq -r 'select(.timestamp) | .timestamp' 2>/dev/null | tail -1)
@@ -310,12 +310,11 @@ if [[ -n "$transcript_path" && -f "$transcript_path" ]]; then
   tool_count=$(grep -c '"tool_use' "$transcript_path" 2>/dev/null || echo 0)
   sess_msg_count=$(grep -c '"type":"user"' "$transcript_path" 2>/dev/null || echo 0)
 
-  # Calculate accurate context % from latest JSONL usage entry
-  # Formula: (cache_read + cache_create + input + output) / context_window * 100
-  ctx_tokens=$(tail -100 "$transcript_path" | jq -r 'select(.message.usage) | (.message.usage.cache_read_input_tokens // 0) + (.message.usage.cache_creation_input_tokens // 0) + (.message.usage.input_tokens // 0) + (.message.usage.output_tokens // 0)' 2>/dev/null | tail -1)
-  if [[ -n "$ctx_tokens" && "$ctx_tokens" -gt 0 ]]; then
-    ctx_window=$(get_ctx_window "$model_id")
-    ctx_from_jsonl=$(bc -l <<< "scale=1; $ctx_tokens * 100 / $ctx_window")
+  # Get latest usage entry for current state
+  latest_usage=$(tail -100 "$transcript_path" | jq -s '[.[] | .message.usage // empty] | .[-1]' 2>/dev/null)
+  if [[ -n "$latest_usage" && "$latest_usage" != "null" ]]; then
+    initial_tokens=$(get_initial_tokens "$latest_usage")
+    ours_tokens=$(get_ours_tokens "$latest_usage")
   fi
 
   # Calculate session cost from JSONL usage (same rate pattern as TOTAL)
@@ -364,17 +363,31 @@ peak_fmt=$(hr_12 "$peak_hr")
 line1="[${G}${user}${Z}][${O}${host}${Z}]${git_info}[${G}${abbrev}${Z}]"
 
 # Line 2: [SESSION][model ctx][tokens][cost][duration][tools]
-_ctx_bar=""
-if [[ -n "$used_pct" && "$used_pct" != "0" && -n "$ctx_from_jsonl" ]]; then
-  build_ctx_bar "$used_pct" "$ctx_from_jsonl"  # Split bar
-elif [[ -n "$used_pct" && "$used_pct" != "0" ]]; then
-  build_ctx_bar "$used_pct"
-elif [[ -n "$ctx_from_jsonl" ]]; then
-  build_ctx_bar "$ctx_from_jsonl"
-elif [[ -n "$model" ]]; then
-  _ctx_bar="[${P}${model}${Z}]"
+# Build context bar from token counts
+ctx_bar=""
+if [[ -n "$model" ]]; then
+  # Use JSONL tokens if available, otherwise derive from input JSON percentage
+  if ((initial_tokens > 0 || ours_tokens > 0)); then
+    bar=$(mk_ctx_bar "$initial_tokens" "$ours_tokens")
+  elif [[ -n "$used_pct" && "$used_pct" != "0" ]]; then
+    # Fallback: treat all as initial (no JSONL data yet)
+    # This handles race condition on first message before JSONL is written
+    initial_tokens=$((${used_pct%.*} * CTX_WINDOW / 100))
+    bar=$(mk_ctx_bar "$initial_tokens" 0)
+  else
+    bar=$(mk_ctx_bar 0 0)
+  fi
+
+  # Calculate display percentage
+  total_tokens=$((initial_tokens + ours_tokens))
+  pct=0
+  ((total_tokens > 0)) && pct=$((total_tokens * 100 / CTX_WINDOW))
+  [[ -n "$used_pct" && "$used_pct" != "0" ]] && pct=${used_pct%.*}
+
+  warn_icon=""
+  ((pct >= WARN_PCT)) && warn_icon="⚡"
+  ctx_bar="[${P}${model}${Z} ctx:${bar} $(thresh_col "$pct" 60 80)${warn_icon}${pct}%${Z}]"
 fi
-ctx_bar="$_ctx_bar"
 
 # Format lines changed for session
 lines_diff=""
