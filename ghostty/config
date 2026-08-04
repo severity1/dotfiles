@@ -1,19 +1,16 @@
 # Ghostty Terminal Configuration
 
 # Font Configuration
-# IMPORTANT: You need to download and install a Nerd Font for icons to work properly in Neovim
-# Download from: https://www.nerdfonts.com/
-# Recommended fonts: JetBrains Mono Nerd Font, Hack Nerd Font, or Meslo LG Nerd Font
-#
-# Once you've installed a Nerd Font, uncomment and update the line below:
-# font-family = "JetBrainsMono Nerd Font"
+# A Nerd Font gives the icons that Neovim and the Claude Code statusline use.
+# Install it with: brew install --cask font-jetbrains-mono-nerd-font
+# This is the family name that Ghostty reports, not the cask name.
+font-family = "JetBrainsMono Nerd Font Mono"
 
 # Font size
 font-size = 12
 
-# Theme (optional - Neovim will use its own colorscheme)
-# theme = dark
-theme = Catppuccin Mocha
+# Theme
+theme = Catppuccin Frappe
 macos-titlebar-style = tabs
 
 # Shell integration
