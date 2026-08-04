@@ -75,12 +75,22 @@ check_dependencies() {
         missing_deps+=("Neovim")
     fi
 
-    # Check for Git (required for LazyVim)
+    # Check for Git (required for LazyVim, and by the Claude Code statusline)
     if command_exists git; then
         print_success "Git is installed"
     else
         print_error "Git is not installed (required for LazyVim plugin manager)"
         missing_deps+=("Git")
+    fi
+
+    # Check for jq - the Claude Code statusline parses its payload with it on
+    # every repaint, so without jq the statusline renders broken continuously
+    # rather than failing once and visibly.
+    if command_exists jq; then
+        print_success "jq is installed"
+    else
+        print_error "jq is not installed (required by the Claude Code statusline)"
+        missing_deps+=("jq")
     fi
 
     if [ ${#missing_deps[@]} -gt 0 ]; then
@@ -99,6 +109,9 @@ check_dependencies() {
                         ;;
                     "Git")
                         print_info "  Git: brew install git"
+                        ;;
+                    "jq")
+                        print_info "  jq: brew install jq"
                         ;;
                 esac
             done
