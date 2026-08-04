@@ -1,42 +1,29 @@
 {
-  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "skipDangerousModePermissionPrompt": true,
+  "theme": "dark",
+  "tui": "fullscreen",
   "env": {
-    "CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR": "true",
-    "DISABLE_PROMPT_CACHING": "0",
+    "CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR": "1",
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
     "DISABLE_TELEMETRY": "1",
     "DISABLE_NON_ESSENTIAL_MODEL_CALLS": "1",
-    "ENABLE_EXPERIMENTAL_MCP_CLI": "true",
-    "ENABLE_LSP_TOOL": "true",
+    "ENABLE_EXPERIMENTAL_MCP_CLI": "false",
+    "ENABLE_TOOL_SEARCH": "true",
     "USE_BUILTIN_RIPGREP": "1"
   },
   "includeCoAuthoredBy": false,
   "permissions": {
-    "allow": [
-      "WebSearch",
-      "Bash(tree:*)",
-      "Bash(uv run pytest:*)"
-    ],
-    "defaultMode": "default"
-  },
-  "enabledPlugins": {
-    "frontend-design@claude-plugins-official": true,
-    "feature-dev@claude-plugins-official": true,
-    "code-review@claude-plugins-official": true,
-    "commit-commands@claude-plugins-official": true,
-    "typescript-lsp@claude-plugins-official": true,
-    "security-guidance@claude-plugins-official": true,
-    "pr-review-toolkit@claude-plugins-official": true,
-    "agent-sdk-dev@claude-plugins-official": true,
-    "pyright-lsp@claude-plugins-official": true,
-    "explanatory-output-style@claude-plugins-official": true,
-    "plugin-dev@claude-plugins-official": true,
-    "learning-output-style@claude-plugins-official": true,
-    "vercel@claude-plugins-official": true,
-    "gopls-lsp@claude-plugins-official": true,
-    "ralph-loop@claude-plugins-official": true,
-    "code-simplifier@claude-plugins-official": true
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)",
+      "Read(./config/credentials.json)",
+      "Read(./build)"
+    ]
   },
   "alwaysThinkingEnabled": true,
+  "showClearContextOnPlanAccept": true,
+  "voiceEnabled": true,
   "statusLine": {
     "type": "command",
     "command": "bash ~/.claude/statusline-command.sh"
