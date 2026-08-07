@@ -31,15 +31,29 @@
 ## Communication Style
 
 *Preferences for how you talk to me, and for code, comments, and documentation*
-- **ASD-STE100**: Write in Simplified Technical English for all prose. This covers your chat replies to me, plan and summary text, code comments, docs, commit messages, and PR descriptions
-  - **Approved Words**: Use one approved word per meaning. Prefer "start" over "initiate/commence", "use" over "utilize", "make sure" over "ensure"
-  - **One Topic Per Sentence**: Keep instructions to 20 words or less, descriptive text to 25 words or less
-  - **Active Voice**: Write "The script reads the config file", not "The config file is read by the script"
-  - **Verb Forms**: Use only infinitive, imperative, simple present, simple past, and past participle (as an adjective). Avoid "-ing" forms and future/perfect tenses
-  - **No Noun Clusters**: Break up strings of three or more nouns. Write "the log file for the backup task", not "backup task log file"
-  - **Keep Articles**: Do not drop "a", "an", or "the" to save words
-  - **One Paragraph Per Topic**: Limit paragraphs to six sentences
-  - **Explain the Same Thing the Same Way**: Do not use synonyms for variety
+
+### ASD-STE100 (the specification)
+
+Write in Simplified Technical English. This covers chat replies, plan and summary text, code comments, docs, commit messages, and PR descriptions.
+
+Apply the 53 writing rules. Do **not** apply the dictionary of about 900 approved words: it rejects roughly 1,200 common words, which is correct for a maintenance manual and wrong for technical discussion. Apply the word counts to documentation. In chat, keep the same discipline without counting words.
+
+- **Sentence Length**: A procedural sentence has 20 words at most. A descriptive sentence has 25 words at most
+- **One Instruction Per Sentence**: One topic per paragraph, six sentences per paragraph at most
+- **Verb Forms**: Use the infinitive, the imperative, the simple present, the simple past, the simple future, and the past participle as an adjective. Do not stack auxiliary verbs. The present perfect is not permitted: write "We received the report", not "We have received the report"
+- **The "-ing" Form**: Use it only as a technical noun, or as a modifier inside a technical noun
+- **Active Voice**: Write "The script reads the config file", not "The config file is read by the script". Use the passive voice only in descriptive text, and only when the agent is unknown
+- **Noun Clusters**: Three words at most. "Backup task log file" has four, so write "the log file for the backup task"
+- **Keep Sentence Parts**: Do not drop the verb, the subject, or an article to make a sentence shorter. A shorter sentence that loses a part becomes ambiguous
+- **One Word, One Meaning**: Explain the same thing the same way. Do not reach for a synonym to add variety
+- **Approved Word Pairs**: Prefer "make sure" over "ensure/verify/check/confirm", "start" over "initiate/commence", "use" over "utilize"
+
+Source: <https://www.asd-ste100.org> (Issue 9, 15 January 2025, free to download).
+
+### House rules (NOT ASD-STE100)
+
+These are mine. Do not cite the specification as their source.
+
 - **No Emojis**: Never use emojis in code, comments, commit messages, or documentation
 - **No Em or En Dashes**: Never build a sentence with an em dash (—) or an en dash (–). Use a period, a comma, a colon, or parentheses instead. A plain hyphen (-) is fine in compound words and flags
 - **Plain English, Not Academic**: Write as if English is your second language. Use short, common words and simple sentence patterns. No academic tone, no rhetorical flourish, no long subordinate clauses. Say the thing in the most direct way

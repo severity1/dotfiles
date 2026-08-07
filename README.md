@@ -21,6 +21,10 @@ severity1/
 │   ├── CLAUDE.md              # Global instructions
 │   ├── settings.json          # Global settings
 │   └── statusline-command.sh  # Custom statusline script
+├── codex/                     # Codex CLI configuration
+│   └── config.toml            # Global settings, includes the STE hook
+├── bin/                       # Scripts shared by more than one tool
+│   └── ste-reminder           # Writing-rules hook (Claude Code + Codex)
 └── install.sh        # Automated installation script
 ```
 
@@ -46,6 +50,19 @@ severity1/
 - Custom settings with LSP tools, plugins, and permissions
 - Statusline script (see below)
 - Location: `~/.claude/`
+
+### Simplified Technical English hook
+
+`bin/ste-reminder` prints the writing rules. Claude Code and Codex both run it on the `UserPromptSubmit` event, so the rules arrive next to the newest turn instead of fading with the system prompt. The script lives in `~/.local/bin/` because two tools share it.
+
+The rules come in two parts, and the file says which is which:
+
+- **Part 1 is ASD-STE100**, checked against the specification (Issue 9, 15 January 2025, free at <https://www.asd-ste100.org>). It applies the 53 writing rules. It does not apply the dictionary of about 900 approved words, because that dictionary rejects normal technical vocabulary.
+- **Part 2 is house style.** No em dashes, no emojis, no marketing tone, and no success claim without proof. These are not in the specification, and the file says so.
+
+`claude/CLAUDE.md` carries the same split for the sessions that read it directly.
+
+The same rules ship as the `slalom-ste` plugin in `slalom-agent-kit`, which adds a Kiro path. Kiro has no prompt-submit event, so Kiro reads a steering file instead of running a hook.
 
 #### Statusline
 
@@ -125,6 +142,17 @@ cp claude/settings.json ~/.claude/settings.json
 cp claude/statusline-command.sh ~/.claude/statusline-command.sh
 chmod +x ~/.claude/statusline-command.sh
 ```
+
+#### Writing-rules hook (Claude Code + Codex)
+
+```bash
+mkdir -p ~/.local/bin ~/.codex
+cp bin/ste-reminder ~/.local/bin/ste-reminder
+chmod +x ~/.local/bin/ste-reminder
+cp codex/config.toml ~/.codex/config.toml
+```
+
+The Codex copy overwrites `~/.codex/config.toml`. Back up your own file first if it holds model, proxy, or MCP settings.
 
 ## Notes
 

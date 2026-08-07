@@ -1,0 +1,13 @@
+# Codex CLI user configuration.
+
+# Print the Simplified Technical English rules before each response.
+# The script is shared with the Claude Code UserPromptSubmit hook, so one
+# copy of the rules serves both tools. Edit ~/.local/bin/ste-reminder to
+# change them.
+[[hooks.UserPromptSubmit]]
+
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = '"$HOME/.local/bin/ste-reminder"'
+timeout = 10
+statusMessage = "Loading the STE rules"

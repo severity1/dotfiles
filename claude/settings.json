@@ -21,6 +21,18 @@
       "Read(./build)"
     ]
   },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.local/bin/ste-reminder\""
+          }
+        ]
+      }
+    ]
+  },
   "alwaysThinkingEnabled": true,
   "showClearContextOnPlanAccept": true,
   "voiceEnabled": true,

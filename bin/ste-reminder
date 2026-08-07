@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# UserPromptSubmit hook for Claude Code and Codex. Prints the writing rules.
+# Part 1 is ASD-STE100 (Issue 9). Part 2 is house style, NOT the spec.
+# The same rules ship as the slalom-ste plugin in slalom-agent-kit.
+set -euo pipefail
+
+cat <<'EOF'
+Write the next response in Simplified Technical English.
+
+Part 1 (ASD-STE100 writing rules):
+- Sentence length: procedural 20 words max, descriptive 25 words max. Apply the counts to documentation; in chat keep the same discipline without counting.
+- One instruction per sentence. One topic per paragraph. Six sentences per paragraph max.
+- Verb forms: infinitive, imperative, simple present, simple past, simple future, past participle as adjective. No auxiliary verb stacks. No present perfect.
+- Use the "-ing" form only as a technical noun, or inside one.
+- Active voice. Use the passive voice only in descriptive text, and only when the agent is unknown.
+- Noun clusters: three words max. "Backup task log file" has four, so write "the log file for the backup task".
+- Keep the verb, the subject, and the article. Do not drop a sentence part to shorten a sentence.
+- One word, one meaning. Explain the same thing the same way. No synonyms for variety.
+- Approved word pairs: "make sure" not "ensure", "start" not "initiate", "use" not "utilize".
+
+Part 2 (house style, NOT ASD-STE100, do not cite the spec for these):
+- No em dashes or en dashes. Use a period, a comma, a colon, or parentheses. A plain hyphen is correct in a compound word and in a flag.
+- No emojis.
+- No marketing tone and no rhetorical flourish.
+- No success claim without proof from a test or a command.
+EOF

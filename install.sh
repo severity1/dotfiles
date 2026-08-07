@@ -197,8 +197,9 @@ backup_configs() {
     local ghostty_config="$HOME/.config/ghostty/config"
     local nvim_dir="$HOME/.config/nvim"
     local claude_dir="$HOME/.claude"
+    local codex_dir="$HOME/.codex"
 
-    if [ -f "$ghostty_config" ] || [ -d "$nvim_dir" ] || [ -d "$claude_dir" ]; then
+    if [ -f "$ghostty_config" ] || [ -d "$nvim_dir" ] || [ -d "$claude_dir" ] || [ -d "$codex_dir" ]; then
         print_info "Creating backup at: $backup_dir"
         mkdir -p "$backup_dir"
 
@@ -224,6 +225,14 @@ backup_configs() {
             backed_up=1
         fi
 
+        # Backup Codex config. install_configs overwrites config.toml, which may
+        # already hold model, proxy, or MCP settings that are not tracked here.
+        if [ -d "$codex_dir" ]; then
+            cp -r "$codex_dir" "$backup_dir/codex"
+            print_success "Backed up Codex config"
+            backed_up=1
+        fi
+
         if [ $backed_up -eq 1 ]; then
             print_success "Backup completed successfully"
         fi
@@ -241,6 +250,8 @@ install_configs() {
     mkdir -p "$HOME/.config/ghostty"
     mkdir -p "$HOME/.config/nvim"
     mkdir -p "$HOME/.claude"
+    mkdir -p "$HOME/.codex"
+    mkdir -p "$HOME/.local/bin"
 
     # Copy Ghostty config
     print_info "Installing Ghostty config"
@@ -259,6 +270,18 @@ install_configs() {
     cp "$SCRIPT_DIR/claude/statusline-command.sh" "$HOME/.claude/statusline-command.sh"
     chmod +x "$HOME/.claude/statusline-command.sh"
     print_success "Claude Code config installed"
+
+    # Copy the shared writing-rules hook. Claude Code and Codex both run it on
+    # UserPromptSubmit, so it lives outside either tool's config directory.
+    print_info "Installing the STE writing-rules hook"
+    cp "$SCRIPT_DIR/bin/ste-reminder" "$HOME/.local/bin/ste-reminder"
+    chmod +x "$HOME/.local/bin/ste-reminder"
+    print_success "STE hook installed"
+
+    # Copy Codex config
+    print_info "Installing Codex config"
+    cp "$SCRIPT_DIR/codex/config.toml" "$HOME/.codex/config.toml"
+    print_success "Codex config installed"
 }
 
 # Display post-install instructions
